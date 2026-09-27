@@ -45,7 +45,7 @@ def _board_context():
     }
 
 
-def _drawer_context(hearth):
+def _drawer_context(hearth, show_toasts=False):
     open_run = hearth.open_run()
     probes = []
     if open_run:
@@ -54,10 +54,16 @@ def _drawer_context(hearth):
         "hearth": hearth,
         "open_run": open_run,
         "probes": probes,
+        "show_toasts": show_toasts,
         "phase_form": PhaseChangeForm(hearth=hearth),
         "probe_form": SoftPointProbeForm() if open_run else None,
         "open_run_form": OpenCookRunForm(hearth=hearth) if open_run is None else None,
     }
+
+
+def _first_error(exc: ValidationError) -> str:
+    msgs = getattr(exc, "messages", None)
+    return msgs[0] if msgs else str(exc)
 
 
 @login_required
@@ -78,14 +84,19 @@ def home(request):
 
 @login_required
 def floor_grid_partial(request):
-    html = render_to_string("floor/_grid.html", _board_context(), request=request)
-    return HttpResponse(html)
+    ctx = _board_context()
+    grid = render_to_string("floor/_grid.html", ctx, request=request)
+    # 图例随网格一起 OOB 刷新，保证图例灶数与对应相位瓦片数误差恒为 0。
+    legend = render_to_string(
+        "floor/_phase_legend.html", {**ctx, "legend_oob": True}, request=request
+    )
+    return HttpResponse(grid + legend)
 
 
 @login_required
 def hearth_drawer(request, pk):
     hearth = get_object_or_404(FireHearth, pk=pk)
-    ctx = _drawer_context(hearth)
+    ctx = _drawer_context(hearth, show_toasts=True)
     if _wants_htmx(request):
         return render(request, "floor/_drawer.html", ctx)
     return redirect(f"/?hearth={pk}")
@@ -101,17 +112,16 @@ def change_phase(request, pk):
             change_hearth_phase(hearth, form.cleaned_data["phase"])
             messages.success(request, f"灶牌 {hearth.tag} 相位已更新")
         except ValidationError as exc:
-            msg = (
-                exc.message_dict.get("phase") if hasattr(exc, "message_dict") else None
-            )
-            messages.error(request, msg[0] if msg else str(exc))
+            messages.error(request, _first_error(exc))
     else:
         err = form.errors.get("phase")
         messages.error(request, err[0] if err else "相位切换失败")
 
     if _wants_htmx(request):
         hearth.refresh_from_db()
-        resp = render(request, "floor/_drawer.html", _drawer_context(hearth))
+        resp = render(
+            request, "floor/_drawer.html", _drawer_context(hearth, show_toasts=True)
+        )
         resp["HX-Trigger"] = "floor-refresh"
         return resp
     return redirect(f"/?hearth={pk}")
@@ -136,7 +146,9 @@ def add_probe(request, pk):
         messages.error(request, "探针登记失败，请检查输入")
 
     if _wants_htmx(request):
-        resp = render(request, "floor/_drawer.html", _drawer_context(hearth))
+        resp = render(
+            request, "floor/_drawer.html", _drawer_context(hearth, show_toasts=True)
+        )
         resp["HX-Trigger"] = "floor-refresh"
         return resp
     return redirect(f"/?hearth={pk}")
@@ -152,8 +164,8 @@ def open_run(request, pk):
         run.hearth = hearth
         run.save()
         if hearth.phase == FireHearth.PHASE_COLD:
-            hearth.phase = FireHearth.PHASE_CHARGING
-            hearth.save(update_fields=["phase"])
+            # 冷灶 → 装料，同样走服务层唯一判定，不在视图里另写规则。
+            change_hearth_phase(hearth, FireHearth.PHASE_CHARGING)
         messages.success(request, "新值守已开灶")
     else:
         for errs in form.errors.values():
@@ -163,7 +175,9 @@ def open_run(request, pk):
 
     if _wants_htmx(request):
         hearth.refresh_from_db()
-        resp = render(request, "floor/_drawer.html", _drawer_context(hearth))
+        resp = render(
+            request, "floor/_drawer.html", _drawer_context(hearth, show_toasts=True)
+        )
         resp["HX-Trigger"] = "floor-refresh"
         return resp
     return redirect(f"/?hearth={pk}")
@@ -177,15 +191,22 @@ def close_run(request, pk):
     if open_run is None:
         messages.error(request, "没有进行中的值守可收灶")
     else:
-        open_run.closedAt = timezone.now()
-        open_run.save(update_fields=["closedAt"])
-        hearth.phase = FireHearth.PHASE_COLD
-        hearth.save(update_fields=["phase"])
-        messages.success(request, "值守已收灶，灶台回冷灶")
+        try:
+            # 收灶即「出胶 → 冷灶」这条边，必须过同一个判定函数；
+            # 其它相位收灶回冷灶属非法边，整体拒绝（值守保持开灶）。
+            change_hearth_phase(hearth, FireHearth.PHASE_COLD)
+        except ValidationError as exc:
+            messages.error(request, _first_error(exc))
+        else:
+            open_run.closedAt = timezone.now()
+            open_run.save(update_fields=["closedAt"])
+            messages.success(request, "值守已收灶，灶台回冷灶")
 
     if _wants_htmx(request):
         hearth.refresh_from_db()
-        resp = render(request, "floor/_drawer.html", _drawer_context(hearth))
+        resp = render(
+            request, "floor/_drawer.html", _drawer_context(hearth, show_toasts=True)
+        )
         resp["HX-Trigger"] = "floor-refresh"
         return resp
     return redirect(f"/?hearth={pk}")

@@ -1,0 +1,5 @@
+<div class="phase-legend" id="phase-legend"{% if legend_oob %} hx-swap-oob="true"{% endif %}>
+  {% for key, label, count in phase_legend %}
+  <span class="leg phase-{{ key }}"><i></i>{{ label }} {{ count }}</span>
+  {% endfor %}
+</div>

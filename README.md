@@ -55,7 +55,20 @@ python manage.py runserver 0.0.0.0:4710
 3. **CookRun（熬制值守）**：归属灶台与来脂批、`openedAt`、`closedAt`（可空）、`targetSoftPointC`
 4. **SoftPointProbe（软化点探针）**：归属值守、`sampledAt`、`softPointC`、`samplerName`
 
-**业务规则**：将灶台相位切到 `drawing`（出胶）时，进行中的 CookRun 必须至少有一条 SoftPointProbe 的 `softPointC ≤ 95`。逻辑在 `apps/kiln/services/floor_rules.py`，由相位切换入口调用。
+**业务规则**：
+
+1. **合法相位边只剩五条（循环）**：`冷灶 → 装料 → 升温 → 保温 → 出胶 → 冷灶`。
+   其余一切边——冷灶直达出胶、出胶退回升温、跳相、原地不动——一律拒绝，
+   抽屉内以中文提示。
+2. **出胶边叠加软化点门槛**：`保温 → 出胶` 时，进行中的 CookRun 必须至少有
+   一条 SoftPointProbe 的 `softPointC ≤ 95`。
+3. **单一判定函数**：允许边与拒绝边的判定收敛在
+   `apps/kiln/services/floor_rules.py` 的 `assert_legal_phase_change`
+   （边表 `PHASE_NEXT` 为唯一来源）。抽屉表单 `PhaseChangeForm` 与服务层
+   `change_hearth_phase` 都调用它；开灶（冷灶→装料）与收灶（出胶→冷灶）
+   也走同一服务入口，规则不散落。
+4. **看板图例一致**：相位图例的灶数恒等于该相位过滤出的瓦片数——图例随
+   灶台网格一起 HTMX 刷新（`hx-swap-oob`），误差为 0。
 
 ## 界面
 
@@ -69,6 +82,7 @@ python manage.py seed_data
 ```
 
 幂等：已有灶台则只保证账号存在。样例地名仅用「松脂坳 / 桐油坑」系。
+种子灶台覆盖全部五种相位：冷灶、装料、升温、保温、出胶。
 
 ## 目录结构
 
