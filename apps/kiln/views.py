@@ -17,6 +17,11 @@ def _wants_htmx(request):
     return request.headers.get("HX-Request") == "true"
 
 
+def _phase_error_message(exc):
+    """从 ValidationError 中取出相位中文错误。"""
+    return exc.messages[0] if hasattr(exc, "messages") else str(exc)
+
+
 def _hearths_for_board():
     return FireHearth.objects.prefetch_related(
         Prefetch(
@@ -101,10 +106,7 @@ def change_phase(request, pk):
             change_hearth_phase(hearth, form.cleaned_data["phase"])
             messages.success(request, f"灶牌 {hearth.tag} 相位已更新")
         except ValidationError as exc:
-            msg = (
-                exc.message_dict.get("phase") if hasattr(exc, "message_dict") else None
-            )
-            messages.error(request, msg[0] if msg else str(exc))
+            messages.error(request, _phase_error_message(exc))
     else:
         err = form.errors.get("phase")
         messages.error(request, err[0] if err else "相位切换失败")
@@ -152,8 +154,7 @@ def open_run(request, pk):
         run.hearth = hearth
         run.save()
         if hearth.phase == FireHearth.PHASE_COLD:
-            hearth.phase = FireHearth.PHASE_CHARGING
-            hearth.save(update_fields=["phase"])
+            change_hearth_phase(hearth, FireHearth.PHASE_CHARGING)
         messages.success(request, "新值守已开灶")
     else:
         for errs in form.errors.values():
@@ -177,11 +178,14 @@ def close_run(request, pk):
     if open_run is None:
         messages.error(request, "没有进行中的值守可收灶")
     else:
-        open_run.closedAt = timezone.now()
-        open_run.save(update_fields=["closedAt"])
-        hearth.phase = FireHearth.PHASE_COLD
-        hearth.save(update_fields=["phase"])
-        messages.success(request, "值守已收灶，灶台回冷灶")
+        try:
+            change_hearth_phase(hearth, FireHearth.PHASE_COLD)
+        except ValidationError as exc:
+            messages.error(request, _phase_error_message(exc))
+        else:
+            open_run.closedAt = timezone.now()
+            open_run.save(update_fields=["closedAt"])
+            messages.success(request, "值守已收灶，灶台回冷灶")
 
     if _wants_htmx(request):
         hearth.refresh_from_db()

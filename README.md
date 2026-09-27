@@ -55,7 +55,21 @@ python manage.py runserver 0.0.0.0:4710
 3. **CookRun（熬制值守）**：归属灶台与来脂批、`openedAt`、`closedAt`（可空）、`targetSoftPointC`
 4. **SoftPointProbe（软化点探针）**：归属值守、`sampledAt`、`softPointC`、`samplerName`
 
-**业务规则**：将灶台相位切到 `drawing`（出胶）时，进行中的 CookRun 必须至少有一条 SoftPointProbe 的 `softPointC ≤ 95`。逻辑在 `apps/kiln/services/floor_rules.py`，由相位切换入口调用。
+**相位机（合法相位边）**：仅允许单向循环的 5 条边 ——
+
+```
+冷灶 → 装料 → 升温 → 保温 → 出胶 → 冷灶
+(cold → charging → ramping → holding → drawing → cold)
+```
+
+其余切换一律在抽屉以中文拒绝，例如：冷灶直达出胶、出胶退回升温、保温直回冷灶、原地不动等。
+
+**出胶门槛**：进入 `drawing`（出胶）时，进行中的 CookRun 必须至少有一条 SoftPointProbe 的 `softPointC ≤ 95`（在合法边之上叠加）。
+
+**单一判定函数**：以上规则集中在 `apps/kiln/services/floor_rules.py` 的
+`validate_phase_transition(hearth, new_phase)`；抽屉表单 `PhaseChangeForm`
+与服务层 `change_hearth_phase`（开灶 / 收灶的相位联动也走它）都调用同一函数，
+任何入口都放不过非法边。
 
 ## 界面
 

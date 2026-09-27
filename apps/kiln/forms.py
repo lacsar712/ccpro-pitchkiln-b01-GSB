@@ -2,7 +2,7 @@ from django import forms
 from django.utils import timezone
 
 from .models import CookRun, FireHearth, ResinLot, SoftPointProbe
-from .services.floor_rules import assert_can_enter_drawing
+from .services.floor_rules import validate_phase_transition
 
 
 class ResinLotForm(forms.ModelForm):
@@ -46,8 +46,8 @@ class PhaseChangeForm(forms.Form):
 
     def clean_phase(self):
         phase = self.cleaned_data["phase"]
-        if self.hearth is not None and phase == FireHearth.PHASE_DRAWING:
-            assert_can_enter_drawing(self.hearth)
+        if self.hearth is not None:
+            validate_phase_transition(self.hearth, phase)
         return phase
 
 
